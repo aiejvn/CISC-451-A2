@@ -1,0 +1,75 @@
+# python -m eval.evalpipeline.run
+# python -m eval.evalpipeline.run --limit 519 --seed 42
+# python -m eval.evalpipeline.run --generation-only --run-id batch1   # generate now
+# python -m eval.evalpipeline.run --skip-generate --run-id batch1   # evaluate later
+
+import argparse
+import csv
+from datetime import datetime
+from pathlib import Path
+
+from .common import RESULTS_DIR, get_model_config, load_dev, load_model_configs
+from .evaluate import evaluate_run
+from .generate import generate, make_run_dir
+
+LEVELS = ["easy", "medium", "hard", "extra", "all"]
+
+
+def append_summary(cfg: dict, run_dir, n: int, metrics: dict) -> None:
+    exact = metrics.get("exact matching accuracy", {}).get("exact match", {})
+    execu = metrics.get("execution accuracy", {}).get("execution", {})
+    path = RESULTS_DIR / "summary.csv"
+    new = not path.exists()
+    with open(path, "a", newline="") as f:
+        w = csv.writer(f)
+        if new:
+            w.writerow(["model", "run", "n", "family", "quantization"]
+                       + [f"exact_{l}" for l in LEVELS] + [f"exec_{l}" for l in LEVELS])
+        w.writerow([cfg["repo_id"], run_dir.name, n, cfg.get("family"), cfg.get("quantization")]
+                   + [exact.get(l, "") for l in LEVELS] + [execu.get(l, "") for l in LEVELS])
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="Generate + evaluate on Spider dev for one or more models.")
+    ap.add_argument("--models", nargs="*", help="HF repo ids from models.yaml (default: all)")
+    ap.add_argument("--limit", type=int, default=None, help="subset size (default: full dev, 1034)")
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--etype", default="match", choices=["match", "exec", "all"])
+    ap.add_argument("--batch-size", type=int, default=None)
+    ap.add_argument("--run-id", default=datetime.now().strftime("%Y%m%d-%H%M%S"))
+    ap.add_argument("--skip-generate", action="store_true", help="only re-evaluate existing run dirs with --run-id")
+    ap.add_argument("--generation-only", action="store_true",
+                    help="generate only (no evaluation/summary); evaluate later with --skip-generate --run-id <id>")
+    ap.add_argument("--models-path", type=Path, default=None, help="look for weights in <path>/<repo_id> first, e.g. ./models")
+    ap.add_argument("--local-only", action="store_true", help="require weights under --models-path; never use the HF cache or network")
+    ap.add_argument("--resume", action="store_true", help="continue an interrupted generation with the same --run-id")
+    ap.add_argument("--loop-stop", action="store_true", help="stop generations stuck in a repetition loop (needs batch size 1)")
+    ap.add_argument("--loop-audit", type=int, default=0, help="with --loop-stop: let the first N detected loops run to max_new_tokens")
+    args = ap.parse_args()
+
+    if args.local_only and args.models_path is None:
+        ap.error("--local-only requires --models-path")
+    if args.generation_only and args.skip_generate:
+        ap.error("--generation-only and --skip-generate are mutually exclusive")
+    repo_ids = args.models or list(load_model_configs())
+    examples = load_dev(args.limit, args.seed)
+    for repo_id in repo_ids:
+        cfg = get_model_config(repo_id)
+        if args.batch_size:
+            cfg["batch_size"] = args.batch_size
+        if args.loop_stop:
+            cfg["loop_stop"] = {"min_new": 4096, "window": 2048, "every": 512, "ratio": 0.15, "patience": 3, "audit": args.loop_audit}
+        run_dir = make_run_dir(repo_id, args.run_id)
+        if not args.skip_generate:
+            generate(cfg, examples, run_dir, args.seed, args.models_path, args.local_only, args.resume)
+        if args.generation_only:
+            print(f"{repo_id}: generation done -> {run_dir}")
+            continue
+        metrics = evaluate_run(run_dir, args.etype)
+        append_summary(cfg, run_dir, len(examples), metrics)
+        print(f"{repo_id}: exact match (all) = "
+              f"{metrics.get('exact matching accuracy', {}).get('exact match', {}).get('all')}")
+
+
+if __name__ == "__main__":
+    main()

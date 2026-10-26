@@ -1,0 +1,139 @@
+"""Shared paths, config loading, data loading, prompts and schema lookup."""
+import json
+import os
+import random
+import sqlite3
+from pathlib import Path
+
+import yaml
+from huggingface_hub import snapshot_download
+from huggingface_hub.errors import LocalEntryNotFoundError
+
+# --- paths -------------------------------------------------------------------
+REPO_ROOT = Path(__file__).resolve().parents[2]
+EVAL_ROOT = REPO_ROOT / "eval"
+TRAIN_JSON = REPO_ROOT / "train.json"
+DEV_JSON = REPO_ROOT / "dev.json"
+RESULTS_DIR = EVAL_ROOT / "results"
+MODELS_CONFIG = EVAL_ROOT / "configs" / "models.yaml"
+# Spider checkout: only used for the schema-only sqlite DBs and evaluation.py.
+SPIDER_DIR = REPO_ROOT / "spider"
+# SPIDER_DB_DIR points schema lookup, training and evaluation at another database tree (e.g. mock_spider/database).
+DB_DIR = Path(os.environ.get("SPIDER_DB_DIR", SPIDER_DIR / "database")).resolve()
+# MODELS_PATH points weight resolution at a local checkpoint tree (e.g. ./models/<author>/<name>), checked before
+# the HF cache; defaults to a models/ dir at the repo root (fine even if that dir doesn't exist -- see _local_dir).
+MODELS_DIR = Path(os.environ.get("MODELS_PATH", REPO_ROOT / "models")).resolve()
+EVALUATION_PY = SPIDER_DIR / "evaluation.py"
+TABLES_JSON = SPIDER_DIR / "evaluation_examples" / "examples" / "tables.json"  # evaluation.py FK map
+
+
+# --- model config ------------------------------------------------------------
+def load_model_configs(path: Path = MODELS_CONFIG) -> dict[str, dict]:
+    with open(path) as f:
+        raw = yaml.safe_load(f)
+    defaults = raw.get("defaults", {})
+    out = {}
+    for m in raw["models"]:
+        cfg = {**defaults, **m}
+        cfg["repo_id"] = f"{m['author']}/{m['name']}"
+        out[cfg["repo_id"]] = cfg
+    return out
+
+
+def get_model_config(repo_id: str, path: Path = MODELS_CONFIG) -> dict:
+    cfgs = load_model_configs(path)
+    if repo_id not in cfgs:
+        raise KeyError(f"{repo_id!r} not in {path}; known: {sorted(cfgs)}")
+    return cfgs[repo_id]
+
+
+# --- data (repo-root train.json / dev.json) ----------------------------------
+def load_split(path: Path, limit: int | None = None, seed: int = 0) -> list[dict]:
+    """Load a split; each example gets "id" = its index in the source file."""
+    with open(path) as f:
+        examples = [{**ex, "id": i} for i, ex in enumerate(json.load(f))]
+    if limit is not None and limit < len(examples):
+        idx = sorted(random.Random(seed).sample(range(len(examples)), limit))
+        examples = [examples[i] for i in idx]
+    return examples
+
+
+def load_dev(limit: int | None = None, seed: int = 0) -> list[dict]:
+    return load_split(DEV_JSON, limit, seed)
+
+
+def load_train(limit: int | None = None, seed: int = 0) -> list[dict]:
+    return load_split(TRAIN_JSON, limit, seed)
+
+
+def write_gold(examples: list[dict], path: Path) -> None:
+    with open(path, "w") as f:
+        for ex in examples:
+            query = " ".join(ex["query"].split())
+            f.write(f"{query}\t{ex['db_id']}\n")
+
+
+# --- schema (read from the sqlite file for each db_id) -----------------------
+_schema_cache: dict[str, str] = {}
+
+
+def schema_text(db_id: str) -> str:
+    if db_id not in _schema_cache:
+        path = DB_DIR / db_id / f"{db_id}.sqlite"
+        if not path.exists():
+            raise FileNotFoundError(f"{path} missing; cannot build schema for {db_id!r}")
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            rows = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND sql IS NOT NULL"
+            ).fetchall()
+        finally:
+            conn.close()
+        _schema_cache[db_id] = "\n\n".join(r[0].rstrip(";") + ";" for r in rows)
+    return _schema_cache[db_id]
+
+
+# --- prompts -----------------------------------------------------------------
+TEMPLATE = (
+    "Given the following SQLite database schema, write a SQL query that answers "
+    "the question.\n\n{schema}\n\nQuestion: {question}\n\n"
+    "Respond with only the SQL query in a ```sql code block."
+)
+
+
+def build_user_prompt(question: str, db_id: str) -> str:
+    return TEMPLATE.format(schema=schema_text(db_id), question=question)
+
+
+# --- local-first HF weight resolution ----------------------------------------
+def _local_dir(repo_id: str, models_path: Path) -> Path | None:
+    """<models_path>/<author>/<name> or flat <models_path>/<name>, if it holds a model (config.json)."""
+    models_path = models_path.expanduser()
+    for cand in (models_path / repo_id, models_path / repo_id.split("/")[-1]):
+        if (cand / "config.json").is_file():
+            return cand
+    return None
+
+
+def resolve_local_path(repo_id: str, models_path: Path | None = None, local_only: bool = False) -> str:
+    """Return a local weights dir: <models_path>/... if present, else the HF cache (downloading once unless local_only).
+
+    `models_path` defaults to MODELS_DIR (./models, or $MODELS_PATH), so every caller checks for a local checkpoint
+    tree before touching the HF cache unless it opts out by passing an explicit path. With local_only, never
+    touches the network and raises if the weights are not under models_path.
+    """
+    models_path = models_path or MODELS_DIR
+    found = _local_dir(repo_id, models_path)
+    if found is not None:
+        print(f"\n>>> LOADING {repo_id} FROM LOCAL DIR {found} (HuggingFace skipped) <<<\n", flush=True)
+        return str(found)
+    if local_only:
+        raise FileNotFoundError(
+            f"--local-only: no model for {repo_id!r} under {models_path} "
+            f"(expected {models_path}/{repo_id}/config.json or {models_path}/{repo_id.split('/')[-1]}/config.json)"
+        )
+    try:
+        return snapshot_download(repo_id, local_files_only=True)
+    except LocalEntryNotFoundError:
+        print(f"[hf_cache] {repo_id} not cached yet; downloading...")
+        return snapshot_download(repo_id, local_files_only=False)
