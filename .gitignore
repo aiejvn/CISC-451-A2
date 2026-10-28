@@ -218,3 +218,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# A2: local data / outputs (fetched by setup_env.sh, written by slurm jobs)
+a1_lib/models/
+a1_lib/spider/database/
+a1_lib/eval/results/
+nltk_data/
+logs/
