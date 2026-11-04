@@ -227,3 +227,4 @@ nltk_data/
 logs/
 
 agent_ext/cache/**
+agent_ext/results/**
