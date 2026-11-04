@@ -225,3 +225,5 @@ a1_lib/spider/database/
 a1_lib/eval/results/
 nltk_data/
 logs/
+
+agent_ext/cache/**

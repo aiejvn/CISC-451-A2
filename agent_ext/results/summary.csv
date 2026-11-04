@@ -1,0 +1,2 @@
+arm,run,n,exact_easy,exact_medium,exact_hard,exact_extra,exact_all,exec_easy,exec_medium,exec_hard,exec_extra,exec_all
+rag_react_parse,smoke,20,1.0,0.667,0.6,0.0,0.7,1.0,1.0,0.8,0.0,0.85
