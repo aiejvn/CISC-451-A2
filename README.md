@@ -5,16 +5,16 @@
 | path | what |
 |---|---|
 | `a1_lib/` | Assignment 1 pipeline (model download, generation, Spider evaluator). Imported by `agent_ext/`, never modified. |
-| `agent_ext/` | A2 code: `run.py` (one arm), `compare.py` (paired tests), `report_tables.py` (report numbers), `plot_trajectories.py`, `final_exec.py`, `traces.py` |
+| `agent_ext/` | A2 code: `run.py` (one variant), `compare.py` (paired tests), `report_tables.py` (report numbers), `plot_trajectories.py`, `final_exec.py`, `traces.py` |
 | `RQ1_RQ2.ipynb` | Reproduces every table and figure in the report from a live run |
-| `agent_ext/results/<arm>/<run_id>/` | Outputs of each run (git-ignored) |
+| `agent_ext/results/<variant>/<run_id>/` | Outputs of each run (git-ignored) |
 
-## Ssetup
+## Setup
 
 **Requirements**
 
 - Python 3.10+ (developed on 3.12) and `git`.
-- An NVIDIA GPU is strongly recommended. Qwen3-4B in bf16 needs about 8 GB for weights; the ReAct arms at the default
+- An NVIDIA GPU is strongly recommended. Qwen3-4B in bf16 needs about 8 GB for weights; the ReAct variants at the default
   `--batch-size 64` need far more for long contexts. On a smaller GPU lower `--batch-size` (e.g. 1 or 4); the runner also halves the batch automatically on CUDA out-of-memory. CPU works only for tiny `--limit` checks and is very slow.
 - About 10 GB of disk for the two models, and internet access once, to download them.
 
@@ -39,55 +39,14 @@ python a1_lib/download_models.py                          # Qwen3-4B -> a1_lib/m
 python a1_lib/download_models.py --models sentence-transformers/all-MiniLM-L6-v2   # retriever
 ```
 
-**3. Environment variables** (set in every new shell)
+**3. Run the notebook.** Register the kernel, open `RQ1_RQ2.ipynb`cand run all cells.
 
-```bash
-export PYTHONPATH=$PWD/a1_lib NLTK_DATA=$PWD/nltk_data
-export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1            # optional: guarantees nothing is fetched at run time
-```
-
-**4. Quick check, then a full run**
-
-```bash
-python -m agent_ext.run --arm rag_react_parse --run-id smoke --limit 1 --batch-size 1 \
-    --local-only --models-path a1_lib/models
-
-# full dev set, all variants (lower --batch-size if you run out of GPU memory)
-for arm in base rag react react_parse rag_react rag_react_parse; do
-    python -m agent_ext.run --arm $arm --run-id full --batch-size 16 --local-only --models-path a1_lib/models
-done
-```
-
-Each run writes to `agent_ext/results/<arm>/<run_id>/`. Use `--resume` to continue an interrupted run and
-`--skip-generate` to re-score an existing one.
-
-**5. Tables and figures** (no GPU needed)
-
-```bash
-export OMP_NUM_THREADS=4
-python -m agent_ext.compare --run-id full
-python -m agent_ext.report_tables --run-id full
-python -m agent_ext.plot_trajectories --run-id full
-python -m agent_ext.final_exec --run-id full
-```
-
-**6. Or use the notebook.** Register the kernel, open `RQ1_RQ2.ipynb`cand run all cells.
-
-```bash
-python -m ipykernel install --user --name cisc451 --display-name "CISC451 (.venv)"
-```
-
-Expect small differences from the report: greedy decoding is not bit-identical across GPUs and batch sizes, so
-numbers can move by a point or so.
-
-## Reproducing the report: the notebook
-
-`RQ1_RQ2.ipynb` does all of the above end to end, and then prints every RQ1 and RQ2 table and draws the figures. Select the kernel created by:
+`RQ1_RQ2.ipynb` reproduces all data used in the report end to end. Select the kernel created by:
 
 ```bash
 source .venv/bin/activate && python -m ipykernel install --user --name cisc451 --display-name "CISC451 (.venv)"
 ```
 
 Set `RUN_ID` to a fresh name (default `repro`) so the original `full` results are not overwritten, and `LIMIT` to a small
-number for a quick check. To only regenerate tables and figures from existing results, set `RUN_ID = "full"` and skip the
-"Run the arms" cells.
+number for a quick check. To only regenerate tables and figures from existing results, set `RUN_ID = "full"` and skip
+the run cell (the second code cell).
