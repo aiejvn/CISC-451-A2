@@ -5,7 +5,7 @@
 | path | what |
 |---|---|
 | `a1_lib/` | Assignment 1 pipeline (model download, generation, Spider evaluator). Imported by `agent_ext/`, never modified. |
-| `agent_ext/` | A2 code: `run.py` (one variant), `splits.py` (70:30 train split), `retriever.py`, `compare.py` (paired tests), `report_tables.py` (report numbers), `plot_features.py` (RQ2 figure), `plot_trajectories.py`, `final_exec.py`, `traces.py` |
+| `agent_ext/` | A2 code: `run.py` (one variant), `splits.py` (70:30 train split), `retriever.py`, `compare.py` (paired tests), `report_tables.py` (report numbers), `plot_features.py` (RQ2 figures), `plot_trajectories.py`, `final_exec.py`, `traces.py` |
 | `agent_ext/splits/train_design_seed0.json` | The train split: seed, method and every fit / dev ID |
 | `RQ1_RQ2.ipynb` | Reproduces every table and figure in the report from a live run |
 | `agent_ext/results/<variant>/<run_id>/` | Outputs of each run (git-ignored) |
@@ -182,6 +182,37 @@ Every run writes `agent_ext/results/<variant>/<run_id>/`. Each folder holds `gen
 retrieved train IDs), `pred.txt`, `gold.txt`, `metrics.json`, `eval_raw.txt` (Spider evaluator output), `config_used.yaml`, and `traces/`.
 `agent_ext/results/` is git-ignored.
 
+### Predicted SQL and trajectory logs, per system
+
+Each system and ablation variant has one JSONL file with one row per evaluation-set question (1034 rows, keyed by `id`,
+the row index in `a1_lib/dev.json`). Each row holds the predicted SQL (`pred`) and the full trajectory log.
+
+| System (report name) | variant | predictions + trajectories |
+|---|---|---|
+| System A | `base` | `agent_ext/results/base/full/generations.jsonl` |
+| System A + Few-Shot RAG | `rag` | `agent_ext/results/rag/full/generations.jsonl` |
+| System A + ReAct Loop + Execute Tool | `react` | `agent_ext/results/react/full/generations.jsonl` |
+| System A + ReAct Loop + Execute + Spider Parse Tool | `react_parse` | `agent_ext/results/react_parse/full/generations.jsonl` |
+| System A + Few-Shot RAG + ReAct Loop + Execute Tool | `rag_react` | `agent_ext/results/rag_react/full/generations.jsonl` |
+| System B (Few-Shot RAG + ReAct Loop + Execute + Spider Parse Tool) | `rag_react_parse` | `agent_ext/results/rag_react_parse/full/generations.jsonl` |
+
+The three RAG variants also have a `full_allpool/generations.jsonl` (same format), from an earlier run in which few-shot
+RAG retrieved from all of Spider train rather than only the 70% fit pool.
+
+Fields of every row:
+
+- `id`, `db_id`, `question`, `gold` (gold SQL), `pred` (the predicted SQL that was scored), `new_tokens` (tokens generated
+  for this question, summed over all steps), `fewshot_ids` (the 5 retrieved train IDs, or `null` without RAG).
+- Single-shot variants (`base`, `rag`): `raw`, the model's full output, from which `pred` was extracted. This one call is
+  the whole trajectory.
+- ReAct variants (`react`, `react_parse`, `rag_react`, `rag_react_parse`): `trace`, the full trajectory, with one entry per
+  step: `step`, `output` (the model's Thought and Action text), `action` (`execute`, `spider_parse` or `finish`), `sql`
+  (the query passed to the action), `observation` (the tool's reply; `null` for `finish`). Plus `steps` (number of steps)
+  and `finished` (whether the loop ended with `finish` rather than running out of steps).
+
+The same predictions, one query per line in `id` order, are in `pred.txt` next to each JSONL file (the file Spider's
+evaluator scores). `traces/sample.md` in each run folder shows a few sampled trajectories in readable form.
+
 Runs used in the report (`full` = all 1034 evaluation questions):
 
 ```
@@ -198,7 +229,8 @@ agent_ext/results/base/design/failure_candidates.csv       # report_tables.failu
 # Report numbers, paired tests and figures
 agent_ext/results/report_numbers_full.txt                  # report_tables + compare + plot_features output
 agent_ext/results/summary.csv                              # one row per run
-report/traj_features.png                                   # RQ2 figure: python -m agent_ext.plot_features --run-id full
+report/traj_repair.png                                     # RQ2 figures: python -m agent_ext.plot_features --run-id full
+report/traj_distance.png
 ```
 
 Paths without comments:
@@ -213,7 +245,8 @@ agent_ext/results/base/design/generations.jsonl<br>
 agent_ext/results/base/design/failure_candidates.csv<br>
 agent_ext/results/report_numbers_full.txt<br>
 agent_ext/results/summary.csv<br>
-report/traj_features.png<br>
+report/traj_repair.png<br>
+report/traj_distance.png<br>
 agent_ext/results/rag/full_allpool/<br>
 agent_ext/results/rag_react/full_allpool/<br>
 agent_ext/results/rag_react_parse/full_allpool/<br>
