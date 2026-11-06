@@ -1,4 +1,4 @@
-"""Prompts. Single-shot arms reuse the A1 template unchanged, so `base` reproduces the A1 run."""
+"""Prompts. Single-shot variants reuse the A1 template unchanged, so `base` reproduces the A1 run."""
 from eval.evalpipeline.common import build_user_prompt, schema_text
 
 from .tools import DESCRIPTIONS

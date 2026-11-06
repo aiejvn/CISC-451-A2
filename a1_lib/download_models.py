@@ -1,6 +1,6 @@
-"""Download every model in eval/configs/models.yaml into models/<author>/<name> (run on a node with internet).
+"""Download every model in eval/configs/models.yaml into models/<author>/<name> (needs internet once).
 
-Slurm compute nodes are offline; jobs then load weights from this local tree (see common.resolve_local_path).
+Runs then load weights from this local tree, offline (see common.resolve_local_path).
 
     python download_models.py                          # all models in models.yaml
     python download_models.py --models Qwen/Qwen3-4B   # just these

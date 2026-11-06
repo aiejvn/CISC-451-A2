@@ -1,6 +1,7 @@
 """k nearest Spider train examples to a question, by cosine similarity of MiniLM sentence embeddings.
 
-Train and dev share no databases, so the retrieved examples never contain a dev answer.
+The pool is only the 70% "fit" part of train (agent_ext/splits.py), so retrieval never touches the 30% design
+slice we used to design System B. Train and Spider dev share no databases, so it never contains a dev answer either.
 """
 import hashlib
 from pathlib import Path
@@ -8,6 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from . import CACHE_DIR, EMBEDDER
+from .splits import fit_ids
 from eval.evalpipeline.common import TRAIN_JSON, load_train, resolve_local_path
 
 
@@ -23,7 +25,8 @@ class Retriever:
         self.model = AutoModel.from_pretrained(path, local_files_only=True).eval().to(self.device)
         self.torch, self.k, self.batch_size = torch, k, batch_size
         self.train = load_train()
-        self.train_emb = self._train_embeddings()
+        self.pool = np.array(fit_ids())  # train.json indices the retriever may return
+        self.pool_emb = self._train_embeddings()[self.pool]
 
     def embed(self, texts: list[str]) -> np.ndarray:
         """Mean-pooled, L2-normalised embeddings (the all-MiniLM-L6-v2 recipe), so a dot product is the cosine."""
@@ -51,8 +54,9 @@ class Retriever:
 
     def topk(self, questions: list[str]) -> list[list[dict]]:
         """For each question: the k most similar train examples, most similar first, with their cosine score."""
-        sims = self.embed(questions) @ self.train_emb.T
+        sims = self.embed(questions) @ self.pool_emb.T
         idx = np.argsort(-sims, axis=1)[:, : self.k]
-        return [[{"train_id": int(j), "score": round(float(s[j]), 4), "question": self.train[j]["question"],
-                  "query": " ".join(self.train[j]["query"].split()), "db_id": self.train[j]["db_id"]}
+        return [[{"train_id": int(self.pool[j]), "score": round(float(s[j]), 4),
+                  "question": self.train[self.pool[j]]["question"],
+                  "query": " ".join(self.train[self.pool[j]]["query"].split()), "db_id": self.train[self.pool[j]]["db_id"]}
                  for j in row] for row, s in zip(idx, sims)]
